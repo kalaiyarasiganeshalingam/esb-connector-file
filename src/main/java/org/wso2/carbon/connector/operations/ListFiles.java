@@ -22,14 +22,16 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 
 import org.apache.commons.lang.StringUtils;
-import org.apache.commons.vfs2.FileFilter;
-import org.apache.commons.vfs2.FileFilterSelector;
-import org.apache.commons.vfs2.FileName;
-import org.apache.commons.vfs2.FileObject;
-import org.apache.commons.vfs2.FileSystemException;
-import org.apache.commons.vfs2.FileSystemManager;
-import org.apache.commons.vfs2.FileSystemOptions;
-import org.apache.commons.vfs2.provider.local.LocalFileName;
+import org.wso2.org.apache.commons.vfs2.FileContent;
+import org.wso2.org.apache.commons.vfs2.FileContentInfo;
+import org.wso2.org.apache.commons.vfs2.FileFilter;
+import org.wso2.org.apache.commons.vfs2.FileFilterSelector;
+import org.wso2.org.apache.commons.vfs2.FileName;
+import org.wso2.org.apache.commons.vfs2.FileObject;
+import org.wso2.org.apache.commons.vfs2.FileSystemException;
+import org.wso2.org.apache.commons.vfs2.FileSystemManager;
+import org.wso2.org.apache.commons.vfs2.FileSystemOptions;
+import org.wso2.org.apache.commons.vfs2.provider.local.LocalFileName;
 import org.apache.synapse.MessageContext;
 import org.wso2.carbon.connector.connection.FileSystemHandler;
 import org.wso2.integration.connector.core.AbstractConnectorOperation;
@@ -45,6 +47,7 @@ import org.wso2.carbon.connector.utils.Error;
 import org.wso2.carbon.connector.utils.Const;
 import org.wso2.carbon.connector.utils.Utils;
 import org.wso2.carbon.connector.utils.SimpleFileFiler;
+import org.wso2.carbon.connector.utils.AdvancedFileFilter;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -62,6 +65,11 @@ public class ListFiles extends AbstractConnectorOperation {
     private static final String RESPONSE_FORMAT_PARAM = "responseFormat";
     private static final String SORT_ATTRIB_PARAM = "sortingAttribute";
     private static final String SORT_ORDER_PARAM = "sortingOrder";
+    private static final String FILE_FILTER_TYPE = "fileFilterType";
+    private static final String INCLUDE_FILES = "includeFiles";
+    private static final String EXCLUDE_FILES = "excludeFiles";
+    private static final String MAX_FILE_AGE = "maxFileAge";
+    private static final String SUB_DIRECTORY_MAX_DEPTH = "subDirectoryMaxDepth";
     private static final String DEFAULT_SORT_ATTRIB = "Name";
     private static final String DEFAULT_SORT_ORDER = "Ascending";
     private static final String DIRECTORY_ELE_NAME = "directory";
@@ -73,9 +81,9 @@ public class ListFiles extends AbstractConnectorOperation {
     private static final String HIERARCHICAL_FORMAT = "Hierarchical";
     private static final String FLAT_FORMAT = "Flat";
 
-
     private static final String OPERATION_NAME = "listFiles";
     private static final String ERROR_MESSAGE = "Error while performing file:listFiles for folder ";
+    private static final String APPEND_ATTRIBUTES = "appendFileAttributes";
 
     @Override
     public void execute(MessageContext messageContext, String responseVariable, Boolean overwriteBody)
@@ -86,6 +94,7 @@ public class ListFiles extends AbstractConnectorOperation {
         String responseFormat;
         boolean recursive;
         FileObject folder = null;
+        boolean appendFileAttributes = false;
 
         FileSystemHandler fileSystemHandlerConnection = null;
         ConnectionHandler handler = ConnectionHandler.getConnectionHandler();
@@ -134,18 +143,36 @@ public class ListFiles extends AbstractConnectorOperation {
                         lookupTemplateParamater(messageContext, RECURSIVE_PARAM);
                 recursive = Boolean.parseBoolean(recursiveStr);
 
+                String appendFileAttributesStr = (String) ConnectorUtils.
+                    lookupTemplateParamater(messageContext, APPEND_ATTRIBUTES);
+                appendFileAttributes = Boolean.parseBoolean(appendFileAttributesStr);
+
                 String sortingAttribute = Utils.lookUpStringParam(messageContext, SORT_ATTRIB_PARAM, DEFAULT_SORT_ATTRIB);
                 String sortingOrder = Utils.lookUpStringParam(messageContext, SORT_ORDER_PARAM, DEFAULT_SORT_ORDER);
+                
+                // Read new filtering parameters
+                String fileFilterType = (String) ConnectorUtils.
+                        lookupTemplateParamater(messageContext, FILE_FILTER_TYPE);
+                String includeFiles = (String) ConnectorUtils.
+                        lookupTemplateParamater(messageContext, INCLUDE_FILES);
+                String excludeFiles = (String) ConnectorUtils.
+                        lookupTemplateParamater(messageContext, EXCLUDE_FILES);
+                String maxFileAge = (String) ConnectorUtils.
+                        lookupTemplateParamater(messageContext, MAX_FILE_AGE);
+                String subDirectoryMaxDepth = (String) ConnectorUtils.
+                        lookupTemplateParamater(messageContext, SUB_DIRECTORY_MAX_DEPTH);
 
                 folderPath = fileSystemHandlerConnection.getBaseDirectoryPath() + folderPath;
-                folder = fsManager.resolveFile(folderPath, fso);
+                folder = fileSystemHandlerConnection.resolveFileWithSuspension(folderPath);
 
                 if (folder.exists()) {
 
                     if (folder.isFolder()) {
                         //Added debug logs to track the flow and identify bottlenecks
                         JsonObject fileListJson = listFilesInFolder(folder, fileMatchingPattern,
-                                recursive, responseFormat, sortingAttribute, sortingOrder);
+                            recursive, responseFormat, sortingAttribute, sortingOrder,
+                            fileFilterType, includeFiles, excludeFiles, maxFileAge,
+                            subDirectoryMaxDepth, appendFileAttributes);
                         log.debug(Const.CONNECTOR_NAME + ": " + OPERATION_NAME + " operation completed.");
 
                         JsonObject resultJSON = generateOperationResult(messageContext,
@@ -224,27 +251,43 @@ public class ListFiles extends AbstractConnectorOperation {
      * This method will recursively look into subdirectories.
      * Lists files adhering to sort attribute and order specified.
      *
-     * @param folder           Folder to scan
-     * @param pattern          Specific pattern of files to include in the listing
-     * @param recursive        true, if to look into subdirectories
-     * @param responseFormat   JSON format is determined by this
-     * @param sortingAttribute Attribute to use for file sorting
-     * @param sortOrder        Sorting order to use
+     * @param folder                Folder to scan
+     * @param pattern               Specific pattern of files to include in the listing
+     * @param recursive             true, if to look into subdirectories
+     * @param responseFormat        JSON format is determined by this
+     * @param sortingAttribute      Attribute to use for file sorting
+     * @param sortOrder             Sorting order to use
+     * @param appendFileAttributes  true, if append file attributes to the response
      * @return JsonObject with organized listing
      * @throws FileSystemException           In case of reading the directory
      * @throws InvalidConfigurationException In case issue of config issue
      */
     private JsonObject listFilesInFolder(FileObject folder, String pattern, boolean recursive,
-                                         String responseFormat, String sortingAttribute, String sortOrder)
-            throws FileSystemException, InvalidConfigurationException {
+        String responseFormat, String sortingAttribute, String sortOrder, String filterType,
+        String includeFiles, String excludeFiles, String maxFileAge, String subDirectoryMaxDepth,
+        boolean appendFileAttributes) throws FileSystemException, InvalidConfigurationException {
+
+        // Parse depth limit for recursive operations
+        int maxDepth = -1; // -1 means unlimited
+        if (!StringUtils.isEmpty(subDirectoryMaxDepth)) {
+            try {
+                maxDepth = Integer.parseInt(subDirectoryMaxDepth);
+            } catch (NumberFormatException e) {
+                maxDepth = -1; // Invalid depth, use unlimited
+            }
+        }
 
         if (responseFormat.equals(HIERARCHICAL_FORMAT)) {
-            return listFilesInHierarchicalFormat(folder, pattern, recursive, sortingAttribute, sortOrder);
+            return listFilesInHierarchicalFormat(folder, pattern, recursive, sortingAttribute,
+                sortOrder, filterType, includeFiles, excludeFiles, maxFileAge, maxDepth, 0,
+                appendFileAttributes);
         } else if (responseFormat.equals(FLAT_FORMAT)) {
             JsonObject filesObj = new JsonObject();
             JsonArray filesArray = new JsonArray();
             filesObj.add(FILES_ELE_NAME, filesArray);
-            listFilesInFlatFormat(folder, pattern, recursive, sortingAttribute, sortOrder, filesArray);
+            listFilesInFlatFormat(folder, pattern, recursive, sortingAttribute, sortOrder,
+                filesArray, filterType, includeFiles, excludeFiles, maxFileAge, maxDepth, 0,
+                appendFileAttributes);
             return filesObj;
         } else {
             throw new InvalidConfigurationException("Unknown responseFormat found " + responseFormat);
@@ -252,27 +295,31 @@ public class ListFiles extends AbstractConnectorOperation {
     }
 
     /**
-     * List all files in the directory in hierarchical manner. If recursive = true,
-     * This method will recursively look into subdirectories.
-     * Lists files adhering to sort attribute and order specified.
+     * List all files in the directory in hierarchical manner. If recursive = true, This method will
+     * recursively look into subdirectories. Lists files adhering to sort attribute and order
+     * specified.
      *
-     * @param folder           Folder to scan
-     * @param pattern          Specific pattern of files to include in the listing
-     * @param recursive        true, if to look into subdirectories
-     * @param sortingAttribute Attribute to use for file sorting
-     * @param sortOrder        Sorting order to use
+     * @param folder               Folder to scan
+     * @param pattern              Specific pattern of files to include in the listing
+     * @param recursive            true, if to look into subdirectories
+     * @param sortingAttribute     Attribute to use for file sorting
+     * @param sortOrder            Sorting order to use
+     * @param appendFileAttributes true, if append file attributes to the response
      * @return JsonObject with organized listing
      * @throws FileSystemException In case of issue reading the directory
      */
     private JsonObject listFilesInHierarchicalFormat(FileObject folder, String pattern,
-                                                     boolean recursive, String sortingAttribute,
-                                                     String sortOrder) throws FileSystemException {
+        boolean recursive, String sortingAttribute,
+        String sortOrder, String filterType, String includeFiles,
+        String excludeFiles, String maxFileAge, int maxDepth,
+        int currentDepth, boolean appendFileAttributes) throws FileSystemException {
 
         String containingFolderName = folder.getName().getBaseName();
         JsonObject folderObj = new JsonObject();
         folderObj.addProperty(NAME_ATTRIBUTE, containingFolderName);
 
-        FileObject[] filesOrFolders = getFilesAndFolders(folder, pattern);
+        FileObject[] filesOrFolders = getFilesAndFolders(folder, pattern, filterType, includeFiles,
+            excludeFiles, maxFileAge);
         FileSorter fileSorter = new FileSorter(sortingAttribute, sortOrder);
         fileSorter.sort(filesOrFolders);
 
@@ -283,11 +330,33 @@ public class ListFiles extends AbstractConnectorOperation {
             if (fileOrFolder.isFile()) {
 //                JsonObject fileObj = new JsonObject();
 //                fileObj.addProperty(FILE_NAME_ELE_NAME, fileOrFolder.getName().getBaseName());
-                filesArray.add(fileOrFolder.getName().getBaseName());
+                String fileName = fileOrFolder.getName().getBaseName();
+                if (appendFileAttributes) {
+                    JsonObject fileObj = new JsonObject();
+                    fileObj.addProperty(FILE_NAME_ELE_NAME, fileName);
+                    if (fileOrFolder.getContent() != null) {
+                        FileContent content = fileOrFolder.getContent();
+                        fileObj.addProperty(Const.SIZE_ELEMENT, content.getSize());
+                        fileObj.addProperty(Const.LAST_MODIFIED_TIME_ELEMENT,
+                            content.getLastModifiedTime());
+                        if (content.getContentInfo() != null) {
+                            FileContentInfo contentInfo = content.getContentInfo();
+                            fileObj.addProperty(Const.CONTENT_TYPE_ELEMENT,
+                                contentInfo.getContentType());
+                            fileObj.addProperty(Const.CONTENT_ENCODING_ELEMENT,
+                                contentInfo.getContentEncoding());
+                        }
+                    }
+                    filesArray.add(fileObj);
+                } else {
+                    filesArray.add(fileName);
+                }
             } else {
-                if (recursive) {
-                    JsonObject subFolderObj = listFilesInHierarchicalFormat(fileOrFolder, pattern, recursive,
-                            sortingAttribute, sortOrder);
+                if (recursive && (maxDepth == -1 || currentDepth < maxDepth)) {
+                    JsonObject subFolderObj = listFilesInHierarchicalFormat(fileOrFolder, pattern,
+                        recursive, sortingAttribute, sortOrder, filterType, includeFiles,
+                        excludeFiles, maxFileAge, maxDepth, currentDepth + 1,
+                        appendFileAttributes);
                     directoriesArray.add(subFolderObj);
                 }
             }
@@ -305,23 +374,26 @@ public class ListFiles extends AbstractConnectorOperation {
     }
 
     /**
-     * List all files in the directory in flat manner. If recursive = true,
-     * This method will recursively look into subdirectories.
-     * Lists files adhering to sort attribute and order specified.
+     * List all files in the directory in flat manner. If recursive = true, This method will
+     * recursively look into subdirectories. Lists files adhering to sort attribute and order
+     * specified.
      *
-     * @param folder           Folder to scan
-     * @param pattern          Specific pattern of files to include in the listing
-     * @param recursive        true, if to look into subdirectories
-     * @param sortingAttribute Attribute to use for file sorting
-     * @param sortOrder        Sorting order to use
-     * @param filesArray       JsonArray to include found files information in
+     * @param folder               Folder to scan
+     * @param pattern              Specific pattern of files to include in the listing
+     * @param recursive            true, if to look into subdirectories
+     * @param sortingAttribute     Attribute to use for file sorting
+     * @param sortOrder            Sorting order to use
+     * @param filesArray           JsonArray to include found files information in
+     * @param appendFileAttributes true, if append file attributes to the response
      * @throws FileSystemException In case of issue reading the directory
      */
     private void listFilesInFlatFormat(FileObject folder, String pattern,
-                                       boolean recursive, String sortingAttribute,
-                                       String sortOrder, JsonArray filesArray) throws FileSystemException {
+        boolean recursive, String sortingAttribute, String sortOrder, JsonArray filesArray,
+        String filterType, String includeFiles, String excludeFiles, String maxFileAge,
+        int maxDepth, int currentDepth, boolean appendFileAttributes) throws FileSystemException {
 
-        FileObject[] filesOrFolders = getFilesAndFolders(folder, pattern);
+        FileObject[] filesOrFolders = getFilesAndFolders(folder, pattern, filterType, includeFiles,
+            excludeFiles, maxFileAge);
         FileSorter fileSorter = new FileSorter(sortingAttribute, sortOrder);
         fileSorter.sort(filesOrFolders);
         for (FileObject fileOrFolder : filesOrFolders) {
@@ -330,10 +402,25 @@ public class ListFiles extends AbstractConnectorOperation {
                 fileObj.addProperty(FILE_NAME_ELE_NAME, fileOrFolder.getName().getBaseName());
                 fileObj.addProperty(FILE_PATH_ELE_NAME, getFilePath(fileOrFolder.getName()));
                 filesArray.add(fileObj);
+                if (appendFileAttributes && fileOrFolder.getContent() != null) {
+                    FileContent content = fileOrFolder.getContent();
+                    fileObj.addProperty(Const.SIZE_ELEMENT, content.getSize());
+                    fileObj.addProperty(Const.LAST_MODIFIED_TIME_ELEMENT,
+                        content.getLastModifiedTime());
+                    if (content.getContentInfo() != null) {
+                        FileContentInfo contentInfo = content.getContentInfo();
+                        fileObj.addProperty(Const.CONTENT_TYPE_ELEMENT,
+                            contentInfo.getContentType());
+                        fileObj.addProperty(Const.CONTENT_ENCODING_ELEMENT,
+                            contentInfo.getContentEncoding());
+                    }
+                }
             } else {
-                if (recursive) {
+                if (recursive && (maxDepth == -1 || currentDepth < maxDepth)) {
                     listFilesInFlatFormat(fileOrFolder, pattern, recursive,
-                            sortingAttribute, sortOrder, filesArray);
+                        sortingAttribute, sortOrder, filesArray, filterType, includeFiles,
+                        excludeFiles, maxFileAge, maxDepth, currentDepth + 1,
+                        appendFileAttributes);
                 }
             }
         }
@@ -345,32 +432,40 @@ public class ListFiles extends AbstractConnectorOperation {
      *
      * @param pattern pattern to match
      */
-    private FileObject[] getFilesAndFolders(FileObject folder, String pattern) throws FileSystemException {
+    private FileObject[] getFilesAndFolders(FileObject folder, String pattern, String filterType,
+                                            String includeFiles, String excludeFiles, String maxFileAge) throws FileSystemException {
 
         ArrayList<FileObject> matchingFilesAndFolders;
         log.debug(Const.CONNECTOR_NAME + ": Start listing matching files and folders.");
-        if (StringUtils.isEmpty(pattern)) {
-            matchingFilesAndFolders = new ArrayList<>(Arrays.asList(folder.getChildren()));
-            log.debug(Const.CONNECTOR_NAME + ": Pattern is empty , Children count : "
-                    + matchingFilesAndFolders.size());
-        } else {
-            FileFilter fileFilter = new SimpleFileFiler(pattern);
-            FileFilterSelector fileFilterSelector = new FileFilterSelector(fileFilter);
-            matchingFilesAndFolders =
-                    new ArrayList<>(Arrays.asList(folder.findFiles(fileFilterSelector)));
-            log.debug(Const.CONNECTOR_NAME + ": Pattern is : " + pattern + " : children count : "
-                    + matchingFilesAndFolders.size());
+        
+        // Determine which filter to use based on available parameters
+        FileFilter fileFilter = null;
+        boolean useAdvancedFilter = !StringUtils.isEmpty(includeFiles) || !StringUtils.isEmpty(excludeFiles) || !StringUtils.isEmpty(maxFileAge);
+        
+        if (useAdvancedFilter) {
+            // Use new advanced filter for include/exclude/age filtering
+            fileFilter = new AdvancedFileFilter(filterType, includeFiles, excludeFiles, maxFileAge);
+        } else if (!StringUtils.isEmpty(pattern)) {
+            // Use legacy simple filter for backward compatibility
+            fileFilter = new SimpleFileFiler(pattern);
         }
-        //when a pattern exists folder.findFiles does not return folders
-        if (!StringUtils.isEmpty(pattern)) {
+        
+        if (fileFilter != null) {
+            FileFilterSelector fileFilterSelector = new FileFilterSelector(fileFilter);
+            matchingFilesAndFolders = new ArrayList<>(Arrays.asList(folder.findFiles(fileFilterSelector)));
+            log.debug(Const.CONNECTOR_NAME + ": Using filter, matched children count: " + matchingFilesAndFolders.size());
+            
+            // Add folders that aren't filtered (folders always included for recursion)
             FileObject[] children = folder.getChildren();
-            log.debug(Const.CONNECTOR_NAME + ": Start traversing to add folders, children count : "
-                    + children.length );
             for (FileObject child : children) {
                 if (child.isFolder() && !matchingFilesAndFolders.contains(child)) {
                     matchingFilesAndFolders.add(child);
                 }
             }
+        } else {
+            // No filtering, return all children
+            matchingFilesAndFolders = new ArrayList<>(Arrays.asList(folder.getChildren()));
+            log.debug(Const.CONNECTOR_NAME + ": No filter, all children count: " + matchingFilesAndFolders.size());
         }
         FileObject[] filesWithFolders = new FileObject[matchingFilesAndFolders.size()];
         return matchingFilesAndFolders.toArray(filesWithFolders);

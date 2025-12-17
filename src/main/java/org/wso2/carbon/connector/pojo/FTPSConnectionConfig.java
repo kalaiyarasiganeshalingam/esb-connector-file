@@ -19,8 +19,8 @@
 package org.wso2.carbon.connector.pojo;
 
 import org.apache.commons.lang.StringUtils;
-import org.apache.commons.vfs2.provider.ftps.FtpsDataChannelProtectionLevel;
-import org.apache.commons.vfs2.provider.ftps.FtpsMode;
+import org.wso2.org.apache.commons.vfs2.provider.ftps.FtpsDataChannelProtectionLevel;
+import org.wso2.org.apache.commons.vfs2.provider.ftps.FtpsMode;
 import org.wso2.carbon.connector.exception.InvalidConfigurationException;
 
 /**
@@ -33,6 +33,7 @@ public class FTPSConnectionConfig extends FTPConnectionConfig {
     private String keyStore;
     private String keyStorePassword;
     private String keyStoreType;
+    private String keyPassword;
     private String trustStore;
     private String trustStorePassword;
     private String trustStoreType;
@@ -103,6 +104,16 @@ public class FTPSConnectionConfig extends FTPConnectionConfig {
     public void setTrustStoreType(String trustStoreType) {
         if (!StringUtils.isEmpty(trustStoreType)) {
             this.trustStoreType = trustStoreType;
+        }
+    }
+  
+    public String getKeyPassword() {
+        return keyPassword;
+    }
+
+    public void setKeyPassword(String keyPassword) {
+        if (!StringUtils.isEmpty(keyPassword)) {
+            this.keyPassword = keyPassword;
         }
     }
 
