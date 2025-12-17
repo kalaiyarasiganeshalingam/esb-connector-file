@@ -55,6 +55,7 @@ public final class Const {
     public static final String KEYSTORE_PATH = "keyStorePath";
     public static final String KEYSTORE_PASSWORD = "keyStorePassword";
     public static final String KEYSTORE_TYPE = "keyStoreType";
+    public static final String KEY_PASSWORD = "keyPassword";
     public static final String TRUSTSTORE_PATH = "trustStorePath";
     public static final String TRUSTSTORE_PASSWORD = "trustStorePassword";
     public static final String TRUSTSTORE_TYPE = "trustStoreType";
@@ -80,6 +81,10 @@ public final class Const {
     public static final String FILE_SEPARATOR = "/";
 
     public static final String FILE_ELEMENT = "file";
+    public static final String LAST_MODIFIED_TIME_ELEMENT = "lastModifiedTime";
+    public static final String SIZE_ELEMENT = "size";
+    public static final String CONTENT_TYPE_ELEMENT = "contentType";
+    public static final String CONTENT_ENCODING_ELEMENT = "contentEncoding";
     public static final String STATUS_CODE = "HTTP_SC";
     public static final Object HTTP_STATUS_500 = "500";
     public static final int UNZIP_BUFFER_SIZE = 4096;
@@ -129,4 +134,7 @@ public final class Const {
 
     public static final String FILE_CONNECTION_TEST = "FILE_CONNECTION_TEST";
     public static final String IS_VALID_CONNECTION = "isValidConnection";
+
+    // SFTP-specific parameters  
+    public static final String SFTP_PATH_FROM_ROOT = "sftpPathFromRoot";
 }
