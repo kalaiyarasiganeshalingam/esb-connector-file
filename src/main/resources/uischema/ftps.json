@@ -142,6 +142,11 @@
                     "defaultValue": "",
                     "required": "false",
                     "helpTip": "KeyStore Type"
+                  }
+                },
+                {
+                  "type": "attribute",
+                  "value": {
                     "name": "keyPassword",
                     "displayName": "Private Key Password",
                     "inputType": "stringOrExpression",
